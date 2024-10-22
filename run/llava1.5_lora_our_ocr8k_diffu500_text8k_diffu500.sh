@@ -1,18 +1,16 @@
 MODEL_VERSION=llava_loraft_dpo_our_ocrvqa8kfilter_diffu500_textvqa8kfilter_diffu500_r1024_a2048
 
 OCR_DPO_DATA=data/step3/ocrvqa_dpo_8k_diffusion_step500.json
-TEXT_DPO_DATA=data/step3/textvqa_dpo_8k_diffusion_step500.json
+TEXT_DPO_DATA=data/step3/textvqa_dpo_8k_filter_diffusion_step500.json
 
 deepspeed seva/train_dpo_ours.py \
     --lora_enable True --lora_r 1024 --lora_alpha 2048 --mm_projector_lr 0 \
     --deepspeed seva/scripts/zero3.json \
-    --model_name_or_path checkpoints/llava-v1.5-7b \
+    --model_name_or_path /home/data/wyy/checkpoints/llava-v1.5-7b \
     --version v1 \
-    --ocr_data_path ${OCR_DPO_DATA} \
-    --ocr_image_path data/ocr_vqa/images/ \
     --textvqa_data_path ${TEXT_DPO_DATA} \
     --textvqa_image_path data/textvqa/train_images/ \
-    --vision_tower ./checkpoints/clip-vit-large-patch14-336 \
+    --vision_tower /home/data/wyy/checkpoints/clip-vit-large-patch14-336 \
     --mm_projector_type mlp2x_gelu \
     --mm_vision_select_layer -2 \
     --mm_use_im_start_end False \

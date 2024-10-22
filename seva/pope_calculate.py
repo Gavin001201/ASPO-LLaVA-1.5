@@ -79,7 +79,12 @@ if __name__ == "__main__":
     ans_file_list = ['{}/pope_random.jsonl'.format(args.path),
                      '{}/pope_popular.jsonl'.format(args.path),
                      '{}/pope_adv.jsonl'.format(args.path)]
-    label_file_list = ['POPE/output/coco/coco_pope_adversarial.json',
-                  'POPE/output/coco/coco_pope_adversarial.json',
-                  'POPE/output/coco/coco_pope_adversarial.json']
+    label_file_list = ['/home/data/wyy/projects/SeVa/data/POPE/output/coco/coco_pope_random.json',
+                       '/home/data/wyy/projects/SeVa/data/POPE/output/coco/coco_pope_popular.json',
+                       '/home/data/wyy/projects/SeVa/data/POPE/output/coco/coco_pope_adversarial.json']
     tag_list = ['random', 'popular', 'adversarial']
+    
+    for i, tag in enumerate(tag_list):
+        print(tag+':')
+        eval_all(ans_file_list[i], label_file_list[i])
+        print('################################')

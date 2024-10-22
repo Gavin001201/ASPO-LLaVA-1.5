@@ -1,6 +1,7 @@
 import os
 os.environ["WANDB_PROJECT"]="ha-dpo"
 
+import pdb
 import json
 import copy
 import random
@@ -218,8 +219,8 @@ class LazySupervisedDataset(Dataset):
             list_data_dict += text_data * 2
 
 
-        print("ocr data", ocr_data_path, ocr_image_path)
-        print("textvqa data", textvqa_data_path, textvqa_image_path)
+        # print("ocr data", ocr_data_path, ocr_image_path)
+        # print("textvqa data", textvqa_data_path, textvqa_image_path)
 
 
         # print(len(list_data_dict))

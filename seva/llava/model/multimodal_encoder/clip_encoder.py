@@ -14,8 +14,8 @@ class CLIPVisionTower(nn.Module):
         self.select_layer = args.mm_vision_select_layer
         self.select_feature = getattr(args, 'mm_vision_select_feature', 'patch')
 
-        print(self.vision_tower_name)
-        self.vision_tower_name = "/data/hypertext/zhuk/llava/LLaVA/checkpoints/clip-vit-large-patch14-336"
+        # print(vision_tower)
+        self.vision_tower_name = "/home/data/wyy/checkpoints/clip-vit-large-patch14-336"
 
 
         if not delay_load:
