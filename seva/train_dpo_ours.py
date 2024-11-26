@@ -215,6 +215,7 @@ class LazySupervisedDataset(Dataset):
 
         if textvqa_data_path is not None:
             text_data = json.load(open(textvqa_data_path, "r"))
+            # text_data = text_data[:2400] + text_data[4000:7600]
             text_data = self.data_preprocess(text_data, textvqa_image_path)
             list_data_dict += text_data * 2
 
@@ -232,25 +233,44 @@ class LazySupervisedDataset(Dataset):
 
 
 
+    # def data_preprocess(self, our_data, our_data_path):
+    #     our_data_dict = []
+    #     image_path_map = {'aokvqa_train2017':'/home/data/wyy/projects/SeVa/data/custom_cot_dpo_train/AOKVQA/train2017', \
+    #                       'scienceqa':'/home/data/wyy/projects/SeVa/data/custom_cot_dpo_train/ScienceQA', \
+    #                       'lvis_train2017':'/home/data/wyy/projects/SeVa/data/custom_cot_dpo_train/VoCoT/LVIS/train2017', \
+    #                       'vqa_train2014':'/home/data/wyy/projects/SeVa/data/custom_cot_dpo_train/VoCoT/VQA/train2014', \
+    #                       'gqa':'/home/data/wyy/projects/SeVa/data/custom_cot_dpo_train/VoCoT/GQA'}
+    #     for idx in range(len(our_data)):
+    #         image_id = our_data[idx]["image"]
+    #         specific_image_path = image_path_map[our_data[idx]["image_source"]]
+    #         chosen = our_data[idx]["chosen"]
+    #         reject = our_data[idx]["reject"]
+    #         question = our_data[idx]["question"]
+    #         question = "<image>\n" + question
+    #         our_data_dict.append({
+    #             "id": image_id,
+    #             "image":  os.path.join(specific_image_path, image_id),
+    #             "chosen_conversations": [
+    #                 {"from": "human", "value": question},
+    #                 {"from": "gpt", "value": chosen},
+    #             ],
+    #             "reject_conversations": [
+    #                 {"from": "human", "value": question},
+    #                 {"from": "gpt", "value": reject},
+    #             ],
+    #         })
+    #     return our_data_dict
+    
     def data_preprocess(self, our_data, our_data_path):
         our_data_dict = []
         for idx in range(len(our_data)):
-            image_id = our_data[idx]["image_id"]
-            chosen = our_data[idx]["chosen"]
-            reject = our_data[idx]["reject"]
-            question = our_data[idx]["question"]
-            question = "<image>\n" + question
+            image_id = our_data[idx]["id"]
+            image = our_data[idx]["image"]
             our_data_dict.append({
                 "id": image_id,
-                "image":  os.path.join(our_data_path, image_id),
-                "chosen_conversations": [
-                    {"from": "human", "value": question},
-                    {"from": "gpt", "value": chosen},
-                ],
-                "reject_conversations": [
-                    {"from": "human", "value": question},
-                    {"from": "gpt", "value": reject},
-                ],
+                "image":  os.path.join(our_data_path, image.split('/')[-1]),
+                "chosen_conversations": our_data[idx]["conversations"],
+                "reject_conversations": our_data[idx]["rejected_conversations"],
             })
         return our_data_dict
 

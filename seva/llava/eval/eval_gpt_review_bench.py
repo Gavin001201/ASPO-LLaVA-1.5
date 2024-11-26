@@ -1,6 +1,7 @@
 import argparse
 import json
 import os
+import requests
 
 import openai
 import time
@@ -8,20 +9,30 @@ import time
 NUM_SECONDS_TO_SLEEP = 0.5
 
 
+headers = {
+    'Content-Type': 'application/json',
+    'tenant': 'icbu-azure-algo',
+    'empId': '413237'
+}
+
+
 def get_eval(content: str, max_tokens: int):
+    context = {
+        "model": "gpt-4-turbo",
+        "messages": [{
+                        'role': 'system',
+                        'content': 'You are a helpful and precise assistant for checking the quality of the answer.'
+                    }, {
+                        'role': 'user',
+                        'content': content,
+                    }]
+        }
     while True:
         try:
-            response = openai.ChatCompletion.create(
-                model='gpt-4-0314',
-                messages=[{
-                    'role': 'system',
-                    'content': 'You are a helpful and precise assistant for checking the quality of the answer.'
-                }, {
-                    'role': 'user',
-                    'content': content,
-                }],
-                temperature=0.2,  # TODO: figure out which temperature is best for evaluation
-                max_tokens=max_tokens,
+            response = requests.post(
+                'https://iai.alibaba-inc.com/azure/chat',
+                headers=headers,
+                json=context,
             )
             break
         except openai.error.RateLimitError:
@@ -30,7 +41,7 @@ def get_eval(content: str, max_tokens: int):
             print(e)
         time.sleep(NUM_SECONDS_TO_SLEEP)
 
-    return response['choices'][0]['message']['content']
+    return response.json()['choices'][0]['message']['content']
 
 
 def parse_score(review):
