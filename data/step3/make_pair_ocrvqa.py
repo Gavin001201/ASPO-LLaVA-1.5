@@ -2,12 +2,12 @@ import json
 import random
 
 # aug_name = 'diffusion_step500'
-aug_name = 'diffusion_step800' 
+# aug_name = 'diffusion_step800' 
 
 
-choosen_file = "../step2/ocrvqa_answer_file_8k_base.jsonl"
+chosen_file = "/home/data/wyy/projects/SeVa/llava_instruction_generated_chosen_7b_iter_1.jsonl"
 
-rejected_file = "../step2/ocrvqa_answer_file_8k_{}.jsonl".format(aug_name)
+rejected_file = "/home/data/wyy/projects/SeVa/llava_instruction_generated_rejected_7b_iter_1.jsonl"
 
 choosen_lines = open(choosen_file, "r").readlines()
 rejected_lines = open(rejected_file, "r").readlines()
@@ -38,8 +38,8 @@ for cline, rline in zip(choosen_lines, rejected_lines):
     message.append(item)
 
 
-if aug_name == 'diffusion_step800':
-    message = random.sample(message, min(4300, len(message))) # we downsample the instances in diffusion-step-800 to approximately align with the instances diffusion-step-500
+# if aug_name == 'diffusion_step800':
+#     message = random.sample(message, min(4300, len(message))) # we downsample the instances in diffusion-step-800 to approximately align with the instances diffusion-step-500
 
 
-json.dump(message, open("ocrvqa_dpo_8k_{}.json".format(aug_name), "w"))
+json.dump(message, open("/home/data/wyy/projects/SeVa/llava_instruction_diffusion_step800_final_13b.json", "w"), indent=4)

@@ -407,6 +407,7 @@ def preprocess_llama_2(
 
 def preprocess_v1(
     sources,
+    source_split,
     tokenizer: transformers.PreTrainedTokenizer,
     has_image: bool = False
 ) -> Dict:
@@ -481,9 +482,27 @@ def preprocess_v1(
                     f" (ignored)"
                 )
 
+    sentence_masks = torch.ones(targets.shape, dtype=torch.int) * -100
+    current_label = 1
+    start_idx = 1 + instruction_len
+    for sent in source_split:
+        sent_ids = tokenizer(
+            sent,
+            return_tensors="pt",
+            padding="longest",
+            max_length=tokenizer.model_max_length,
+            truncation=True,
+        ).input_ids
+        sentence_masks[:, start_idx: start_idx+sent_ids.shape[1]-1] = current_label
+        current_label += 1
+        start_idx += (sent_ids.shape[1]-1)
+
+    assert targets.shape[1] == sentence_masks.shape[1]
+    
     return dict(
         input_ids=input_ids,
         labels=targets,
+        sentence_masks=sentence_masks,
     )
 
 
@@ -577,6 +596,7 @@ def preprocess_plain(
 
 def preprocess(
     sources: Sequence[str],
+    source_split: None,
     tokenizer: transformers.PreTrainedTokenizer,
     has_image: bool = False
 ) -> Dict:
@@ -592,7 +612,7 @@ def preprocess(
     if conversation_lib.default_conversation.sep_style == conversation_lib.SeparatorStyle.LLAMA_2:
         return preprocess_llama_2(sources, tokenizer, has_image=has_image)
     if conversation_lib.default_conversation.version.startswith("v1"):
-        return preprocess_v1(sources, tokenizer, has_image=has_image)
+        return preprocess_v1(sources, source_split, tokenizer, has_image=has_image)
     if conversation_lib.default_conversation.version == "mpt":
         return preprocess_mpt(sources, tokenizer)
     # add end signal and concatenate together

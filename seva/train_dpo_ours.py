@@ -51,6 +51,7 @@ class ModelArguments:
     mm_use_im_start_end: bool = field(default=False)
     mm_use_im_patch_token: bool = field(default=True)
     mm_vision_select_feature: Optional[str] = field(default="patch") 
+    scaling_factor: Optional[int] = field(default=1)
 
 @dataclass
 class DataArguments:
@@ -217,7 +218,7 @@ class LazySupervisedDataset(Dataset):
             text_data = json.load(open(textvqa_data_path, "r"))
             # text_data = text_data[:2400] + text_data[4000:7600]
             text_data = self.data_preprocess(text_data, textvqa_image_path)
-            list_data_dict += text_data * 2
+            list_data_dict += text_data
 
 
         # print("ocr data", ocr_data_path, ocr_image_path)
@@ -233,44 +234,35 @@ class LazySupervisedDataset(Dataset):
 
 
 
-    # def data_preprocess(self, our_data, our_data_path):
-    #     our_data_dict = []
-    #     image_path_map = {'aokvqa_train2017':'/home/data/wyy/projects/SeVa/data/custom_cot_dpo_train/AOKVQA/train2017', \
-    #                       'scienceqa':'/home/data/wyy/projects/SeVa/data/custom_cot_dpo_train/ScienceQA', \
-    #                       'lvis_train2017':'/home/data/wyy/projects/SeVa/data/custom_cot_dpo_train/VoCoT/LVIS/train2017', \
-    #                       'vqa_train2014':'/home/data/wyy/projects/SeVa/data/custom_cot_dpo_train/VoCoT/VQA/train2014', \
-    #                       'gqa':'/home/data/wyy/projects/SeVa/data/custom_cot_dpo_train/VoCoT/GQA'}
-    #     for idx in range(len(our_data)):
-    #         image_id = our_data[idx]["image"]
-    #         specific_image_path = image_path_map[our_data[idx]["image_source"]]
-    #         chosen = our_data[idx]["chosen"]
-    #         reject = our_data[idx]["reject"]
-    #         question = our_data[idx]["question"]
-    #         question = "<image>\n" + question
-    #         our_data_dict.append({
-    #             "id": image_id,
-    #             "image":  os.path.join(specific_image_path, image_id),
-    #             "chosen_conversations": [
-    #                 {"from": "human", "value": question},
-    #                 {"from": "gpt", "value": chosen},
-    #             ],
-    #             "reject_conversations": [
-    #                 {"from": "human", "value": question},
-    #                 {"from": "gpt", "value": reject},
-    #             ],
-    #         })
-    #     return our_data_dict
-    
     def data_preprocess(self, our_data, our_data_path):
         our_data_dict = []
         for idx in range(len(our_data)):
-            image_id = our_data[idx]["id"]
-            image = our_data[idx]["image"]
+            image_id = our_data[idx]["image_id"]
+            # specific_image_path = image_path_map[our_data[idx]["image_source"]]
+            chosen = our_data[idx]["chosen"]
+            reject = our_data[idx]["reject"]
+            chosen_split = our_data[idx]["chosen_split"]
+            reject_split = our_data[idx]["reject_split"]
+            chosen_clip_score = our_data[idx]["chosen_clip_score"]
+            reject_clip_score = our_data[idx]["reject_clip_score"]
+            question = our_data[idx]["question"]
+            question = "<image>\n" + question
             our_data_dict.append({
                 "id": image_id,
-                "image":  os.path.join(our_data_path, image.split('/')[-1]),
-                "chosen_conversations": our_data[idx]["conversations"],
-                "reject_conversations": our_data[idx]["rejected_conversations"],
+                "image":  os.path.join(our_data_path, image_id),
+                "question": question,
+                "chosen_conversations": [
+                    {"from": "human", "value": question},
+                    {"from": "gpt", "value": chosen},
+                ],
+                "reject_conversations": [
+                    {"from": "human", "value": question},
+                    {"from": "gpt", "value": reject},
+                ],
+                "chosen_split": chosen_split,
+                "reject_split": reject_split,
+                "chosen_clip_score": chosen_clip_score,
+                "reject_clip_score": reject_clip_score,
             })
         return our_data_dict
 
@@ -332,20 +324,31 @@ class LazySupervisedDataset(Dataset):
                 self.data_args)
         else:
             sources = copy.deepcopy([e["conversations"] for e in sources])
+            
+        chosen_split = sources[0]['chosen_split']
+        reject_split = sources[0]['reject_split']
+        
         chosen_data_dict = preprocess(
             chosen_sources,
+            chosen_split,
             self.tokenizer,
             has_image=('image' in self.list_data_dict[i]))
         reject_data_dict = preprocess(
             reject_sources,
+            reject_split,
             self.tokenizer,
-            has_image=('image' in self.list_data_dict[i]))
+            has_image=('image' in self.list_data_dict[i]))    
+            
         if isinstance(i, int):
             data_dict = dict(
                 chosen_input_ids=chosen_data_dict["input_ids"][0],
                 chosen_labels=chosen_data_dict["labels"][0],
+                chosen_sentence_masks=chosen_data_dict["sentence_masks"][0],
+                chosen_sentence_scores=sources[0]["chosen_clip_score"],
                 reject_input_ids=reject_data_dict["input_ids"][0],
                 reject_labels=reject_data_dict["labels"][0],
+                reject_sentence_masks=reject_data_dict["sentence_masks"][0],
+                reject_sentence_scores=sources[0]["reject_clip_score"],
             )
 
         # image exist in the data
@@ -365,13 +368,18 @@ class DataCollatorForSupervisedDataset(object):
     tokenizer: transformers.PreTrainedTokenizer
 
     def __call__(self, instances: Sequence[Dict]) -> Dict[str, torch.Tensor]:
-        chosen_input_ids, chosen_labels, reject_input_ids, reject_labels = tuple([instance[key] for instance in instances]
-            for key in ("chosen_input_ids", "chosen_labels", "reject_input_ids", "reject_labels"))
+        chosen_input_ids, chosen_labels, chosen_sentence_masks, chosen_sentence_scores, \
+        reject_input_ids, reject_labels, reject_sentence_masks, reject_sentence_scores = tuple([instance[key] for instance in instances]
+            for key in ("chosen_input_ids", "chosen_labels", "chosen_sentence_masks", "chosen_sentence_scores", \
+                        "reject_input_ids", "reject_labels", "reject_sentence_masks", "reject_sentence_scores"))
         chosen_input_ids = torch.nn.utils.rnn.pad_sequence(
             chosen_input_ids,
             batch_first=True,
             padding_value=self.tokenizer.pad_token_id)
         chosen_labels = torch.nn.utils.rnn.pad_sequence(chosen_labels,
+                                                 batch_first=True,
+                                                 padding_value=IGNORE_INDEX)
+        chosen_sentence_masks = torch.nn.utils.rnn.pad_sequence(chosen_sentence_masks,
                                                  batch_first=True,
                                                  padding_value=IGNORE_INDEX)
         reject_input_ids = torch.nn.utils.rnn.pad_sequence(
@@ -381,15 +389,24 @@ class DataCollatorForSupervisedDataset(object):
         reject_labels = torch.nn.utils.rnn.pad_sequence(reject_labels,
                                                  batch_first=True,
                                                  padding_value=IGNORE_INDEX)
+        reject_sentence_masks = torch.nn.utils.rnn.pad_sequence(reject_sentence_masks,
+                                                 batch_first=True,
+                                                 padding_value=IGNORE_INDEX)
         chosen_input_ids = chosen_input_ids[:, :self.tokenizer.model_max_length]
         chosen_labels = chosen_labels[:, :self.tokenizer.model_max_length]
+        chosen_sentence_masks = chosen_sentence_masks[:, :self.tokenizer.model_max_length]
         reject_input_ids = reject_input_ids[:, :self.tokenizer.model_max_length]
         reject_labels = reject_labels[:, :self.tokenizer.model_max_length]
+        reject_sentence_masks = reject_sentence_masks[:, :self.tokenizer.model_max_length]
         batch = dict(
             chosen_input_ids=chosen_input_ids,
             chosen_labels=chosen_labels,
+            chosen_sentence_masks=chosen_sentence_masks,
+            chosen_sentence_scores=chosen_sentence_scores,
             reject_input_ids=reject_input_ids,
             reject_labels=reject_labels,
+            reject_sentence_masks=reject_sentence_masks,
+            reject_sentence_scores=reject_sentence_scores,
             chosen_attention_mask=chosen_input_ids.ne(self.tokenizer.pad_token_id),
             reject_attention_mask=reject_input_ids.ne(self.tokenizer.pad_token_id),
         )
@@ -817,6 +834,7 @@ def main():
         model=llava_policy_model,
         ref_model=llava_ref_model,
         args=training_args,
+        scaling_factor=model_args.scaling_factor,
         beta=script_args.beta,
         tokenizer=tokenizer,
         max_prompt_length=script_args.max_prompt_length,

@@ -11,15 +11,48 @@ from .base_dpo_trainer import BaseDPOTrainer
 class LlavaDPOTrainer(BaseDPOTrainer):
         
     def concatenated_forward(
-        self, model, inputs
+        self, model, inputs, adaptive_weight=False
     ) -> Tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
         images = inputs["images"]
         chosen_input_ids = inputs["chosen_input_ids"]
         chosen_labels = inputs["chosen_labels"]
         chosen_attention_mask = inputs["chosen_attention_mask"]
+        chosen_sentence_masks = inputs["chosen_sentence_masks"]
+        chosen_sentence_scores = inputs["chosen_sentence_scores"]
         reject_input_ids = inputs["reject_input_ids"]
         reject_labels = inputs["reject_labels"]
         reject_attention_mask = inputs["reject_attention_mask"]
+        reject_sentence_masks = inputs["reject_sentence_masks"]
+        reject_sentence_scores = inputs["reject_sentence_scores"]
+            
+            
+        # chosen_sentence_masks = torch.zeros_like(chosen_labels, dtype=torch.int)
+        batch_size, sequence_length = chosen_labels.shape
+        # # 遍历每个样本
+        # for batch_idx in range(batch_size):
+        #     current_label = 1
+        #     for seq_idx in range(sequence_length):
+        #         if (chosen_labels[batch_idx, seq_idx] == -100) or (chosen_labels[batch_idx, seq_idx] == 2):
+        #             chosen_sentence_masks[batch_idx, seq_idx] = -100
+        #         else:
+        #             chosen_sentence_masks[batch_idx, seq_idx] = current_label
+        #         if chosen_labels[batch_idx, seq_idx] == 29889:  # 如果遇到句号，则增加标签编号
+        #             current_label += 1
+                    
+ 
+        # reject_sentence_masks = torch.zeros_like(reject_labels, dtype=torch.int)   
+        # batch_size, sequence_length = reject_labels.shape
+        # # 遍历每个样本
+        # for batch_idx in range(batch_size):
+        #     current_label = 1
+        #     for seq_idx in range(sequence_length):
+        #         if (reject_labels[batch_idx, seq_idx] == -100) or (reject_labels[batch_idx, seq_idx] == 2):
+        #             reject_sentence_masks[batch_idx, seq_idx] = -100
+        #         else:
+        #             reject_sentence_masks[batch_idx, seq_idx] = current_label
+        #         if reject_labels[batch_idx, seq_idx] == 29889:  # 如果遇到句号，则增加标签编号
+        #             current_label += 1
+            
             
         max_dim = max(chosen_input_ids.shape[1], reject_input_ids.shape[1])
         batch_input_ids = torch.zeros((chosen_input_ids.shape[0]*2, max_dim), dtype=chosen_input_ids.dtype, device=chosen_input_ids.device)
@@ -31,6 +64,19 @@ class LlavaDPOTrainer(BaseDPOTrainer):
         batch_labels[reject_labels.shape[0]:, :reject_labels.shape[1]] = reject_labels
         batch_attention_mask[:chosen_attention_mask.shape[0], :chosen_attention_mask.shape[1]] = chosen_attention_mask
         batch_attention_mask[reject_attention_mask.shape[0]:, :reject_attention_mask.shape[1]] = reject_attention_mask
+        
+        chosen_step_masks = torch.ones((batch_size, max_dim), dtype=chosen_labels.dtype, device=chosen_labels.device) * -100
+        reject_step_masks = torch.ones((batch_size, max_dim), dtype=chosen_labels.dtype, device=chosen_labels.device) * -100
+        chosen_step_masks[:, :chosen_sentence_masks.shape[1]] = chosen_sentence_masks
+        reject_step_masks[:, :reject_sentence_masks.shape[1]] = reject_sentence_masks    
+        
+        image_palcehoder = torch.ones((batch_size, 575), dtype=torch.int, device=chosen_labels.device) * -100
+        chosen_step_masks = torch.cat((image_palcehoder, chosen_step_masks), dim=1)
+        reject_step_masks = torch.cat((image_palcehoder, reject_step_masks), dim=1)
+        
+        step_masks = torch.cat((chosen_step_masks, reject_step_masks), dim=0).float()
+        
+        sentence_scores = chosen_sentence_scores + reject_sentence_scores
         
         # prepare inputs
         (
@@ -59,6 +105,9 @@ class LlavaDPOTrainer(BaseDPOTrainer):
         all_logps = cal_batch_logp(
             all_logits,
             batch_labels,
+            step_masks,
+            sentence_scores,
+            adaptive_weight=adaptive_weight,
             average_log_prob=False,
         )
         
@@ -90,14 +139,14 @@ class LlavaDPOTrainer(BaseDPOTrainer):
             policy_rejected_logps,
             policy_chosen_logits,
             policy_rejected_logits,
-        ) = self.concatenated_forward(self.model, inputs)
+        ) = self.concatenated_forward(self.model, inputs, adaptive_weight=True)
         with torch.no_grad():
             (
                 reference_chosen_logps,
                 reference_rejected_logps,
                 _,
                 _,
-            ) = self.concatenated_forward(self.ref_model, inputs)
+            ) = self.concatenated_forward(self.ref_model, inputs, adaptive_weight=True)
 
         policy_rejected_logps = policy_rejected_logps
         reference_rejected_logps = reference_rejected_logps

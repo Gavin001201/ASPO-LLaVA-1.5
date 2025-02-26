@@ -1,38 +1,29 @@
 import argparse
 import json
 import os
-import requests
 
 import openai
+openai.api_base = "https://api.kwwai.top/v1"
+openai.api_key = "sk-Lvo1tVEiJohx6N36G8YsJklr5CExP4Qbi1aCrdGId0oZEgng"
 import time
 
 NUM_SECONDS_TO_SLEEP = 0.5
 
 
-headers = {
-    'Content-Type': 'application/json',
-    'tenant': 'icbu-azure-algo',
-    'empId': '413237'
-}
-
-
 def get_eval(content: str, max_tokens: int):
-    context = {
-        "model": "gpt-4-turbo",
-        "messages": [{
-                        'role': 'system',
-                        'content': 'You are a helpful and precise assistant for checking the quality of the answer.'
-                    }, {
-                        'role': 'user',
-                        'content': content,
-                    }]
-        }
     while True:
         try:
-            response = requests.post(
-                'https://iai.alibaba-inc.com/azure/chat',
-                headers=headers,
-                json=context,
+            response = openai.ChatCompletion.create(
+                model='gpt-3.5-turbo',
+                messages=[{
+                    'role': 'system',
+                    'content': 'You are a helpful and precise assistant for checking the quality of the answer.'
+                }, {
+                    'role': 'user',
+                    'content': content,
+                }],
+                temperature=0.2,  # TODO: figure out which temperature is best for evaluation
+                max_tokens=max_tokens,
             )
             break
         except openai.error.RateLimitError:
@@ -41,7 +32,7 @@ def get_eval(content: str, max_tokens: int):
             print(e)
         time.sleep(NUM_SECONDS_TO_SLEEP)
 
-    return response.json()['choices'][0]['message']['content']
+    return response['choices'][0]['message']['content']
 
 
 def parse_score(review):
@@ -62,11 +53,12 @@ def parse_score(review):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='ChatGPT-based QA evaluation.')
-    parser.add_argument('-q', '--question')
-    parser.add_argument('-c', '--context')
-    parser.add_argument('-a', '--answer-list', nargs='+', default=[])
-    parser.add_argument('-r', '--rule')
-    parser.add_argument('-o', '--output')
+    parser.add_argument('-q', '--question', default='/home/data/wyy/projects/SeVa/seva/playground/data/eval/llava-bench-in-the-wild/questions.jsonl')
+    parser.add_argument('-c', '--context', default='/home/data/wyy/projects/SeVa/seva/playground/data/eval/llava-bench-in-the-wild/context.jsonl')
+    parser.add_argument('-a', '--answer-list', nargs='+', default=['/home/data/wyy/projects/SeVa/seva/playground/data/eval/llava-bench-in-the-wild/answers_gpt4.jsonl',\
+                                                                    '/home/data/wyy/projects/SeVa/seva/playground/data/eval/llava-bench-in-the-wild/answers/bz_10-lr_2e-6-lora_r_1024-scaling_factor_1-new_data-perplexity-13b-2.jsonl'])
+    parser.add_argument('-r', '--rule', default='/home/data/wyy/projects/SeVa/seva/llava/eval/table/rule.json')
+    parser.add_argument('-o', '--output', default='/home/data/wyy/projects/SeVa/seva/playground/data/eval/llava-bench-in-the-wild/reviews/bz_10-lr_2e-6-lora_r_1024-scaling_factor_1-new_data-perplexity-13b-2.jsonl')
     parser.add_argument('--max-tokens', type=int, default=1024, help='maximum number of tokens produced in the output')
     args = parser.parse_args()
 

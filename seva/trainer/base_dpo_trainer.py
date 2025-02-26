@@ -104,6 +104,7 @@ class BaseDPOTrainer(Trainer):
         model: Union[PreTrainedModel, nn.Module] = None,
         ref_model: Optional[Union[PreTrainedModel, nn.Module]] = None,
         args: TrainingArguments = None,
+        scaling_factor: Optional[float] = 1,
         data_collator: Optional[DataCollator] = None,
         label_pad_token_id: int = -100,
         padding_value: int = 0,
@@ -129,6 +130,7 @@ class BaseDPOTrainer(Trainer):
         compute_metrics: Optional[Callable[[EvalLoopOutput], Dict]] = None,
     ):
         self.is_encoder_decoder = is_encoder_decoder
+        self.scaling_factor = scaling_factor
         
         if hasattr(model, "llama_model"):
             self.is_peft_model = is_peft_available() and (isinstance(model, PeftModel) or isinstance(model.llama_model, PeftModel))
@@ -309,6 +311,9 @@ class BaseDPOTrainer(Trainer):
         self,
         logits: torch.FloatTensor,
         labels: torch.LongTensor,
+        step_masks: torch.LongTensor,
+        sentence_scores: None,
+        adaptive_weight: bool = False,
         average_log_prob: bool = False,
     ) -> torch.FloatTensor:
         """Compute the log probabilities of the given labels under the given logits.
@@ -326,14 +331,83 @@ class BaseDPOTrainer(Trainer):
 
         if not self.is_encoder_decoder:
             labels = labels[:, 1:].clone()
+            step_masks = step_masks[:, 1:].clone()
             logits = logits[:, :-1, :]
         loss_mask = labels != self.label_pad_token_id
 
         # dummy token; we'll ignore the losses on these tokens later
         labels[labels == self.label_pad_token_id] = 0
+        step_masks[step_masks == self.label_pad_token_id] = 0
 
-        per_token_logps = torch.gather(logits.log_softmax(-1), dim=2, index=labels.unsqueeze(2)).squeeze(2)
+        per_token_logps = torch.gather(logits.log_softmax(-1), dim=2, index=labels.unsqueeze(2)).squeeze(2) # 目标 token 的对数概率 [2, 685]
+        # per_token_logps_v = logits.log_softmax(dim=-1)  # 对所有 token 在词表上进行归一化 [2, 685, 32000]
+        # per_token_ps_v = torch.exp(per_token_logps_v)   # 概率 [2, 685, 32000]
+        # token_entropies = -torch.sum(per_token_ps_v * per_token_logps_v, dim=-1)    # 计算每个 token 的熵 [2, 685]
 
+        if adaptive_weight:
+            batch_size = int(per_token_logps.shape[0] / 2)      # 只应用于首选响应
+            temp_masks = torch.ones_like(step_masks)  # 使用临时变量避免 inplace 修改
+            
+            for batch_idx in range(batch_size):
+                batch_masks = step_masks[batch_idx]
+                sim_masks = batch_masks.clone()
+                perp_masks = batch_masks.clone()
+                
+                batch_log_logits = per_token_logps[batch_idx]   # 选中 mini_batch 内的单条数据
+                # batch_token_entropies = token_entropies[batch_idx]   # 选中 mini_batch 内的单条数据
+
+                unique_labels = batch_masks.unique()
+
+                # 对每个标签计算原始自适应权重, 去除 0 元素（padding以及图像与问题等不计算损失的token）
+                for i, label in enumerate(unique_labels[1:]):
+                    mask = (batch_masks == label)
+                    sentence_log_logits = batch_log_logits[mask]
+                    # sentence_token_entropies = batch_token_entropies[mask]
+                    
+                    sentence_mean = sentence_log_logits.mean()  # 句子级对数似然平均值
+                    perplexity = torch.exp(-sentence_mean)  # 句子级困惑度（值越小表示模型生成效果越好）
+                    # semantic_entropy = sentence_token_entropies.mean()  # 句子级语义熵平均值
+                    
+                    # batch_masks[mask] = sentence_mean       # 基于句子级对数似然平均值计算自适应权重
+                    perp_masks[mask] = -perplexity         # 基于句子级困惑度的相反数计算自适应权重
+                    sim_masks[mask] = sentence_scores[batch_idx][i]     # 基于相似度计算自适应权重
+                    # batch_masks[mask] = 1 / semantic_entropy      # 基于句子级语义熵的相反数计算自适应权重
+
+                single_mask = (batch_masks != 0)
+                
+                # if batch_idx < int(batch_size / 2):     # 首选响应，同相
+                sim_slice_part = sim_masks[single_mask]
+                perp_slice_part = perp_masks[single_mask]
+                # else:                                   # 非首选响应，反相
+                #     sim_slice_part = (-1) * sim_masks[single_mask]
+                #     perp_slice_part = (-1) * perp_masks[single_mask]                    
+
+                # 计算 Min-Max 归一化，相似度
+                sim_slice_min = sim_slice_part.min(dim=-1, keepdim=True)[0]
+                sim_slice_max = sim_slice_part.max(dim=-1, keepdim=True)[0]
+                sim_normalized_slice = (sim_slice_part - sim_slice_min) / (sim_slice_max - sim_slice_min + 1e-6)  # 避免除 0
+
+                # 计算 Min-Max 归一化，困惑度
+                perp_slice_min = perp_slice_part.min(dim=-1, keepdim=True)[0]
+                perp_slice_max = perp_slice_part.max(dim=-1, keepdim=True)[0]
+                perp_normalized_slice = (perp_slice_part - perp_slice_min) / (perp_slice_max - perp_slice_min + 1e-6)  # 避免除 0
+
+                # 将归一化结果插回原张量
+                temp_masks[batch_idx, single_mask] = (sim_normalized_slice * 0 + perp_normalized_slice * 1) * self.scaling_factor + 1
+
+
+            # import json
+            # for ii in range(batch_size):
+            #     normalized_rewards = temp_masks[ii].unique().cpu().detach().tolist()
+            #     normalized_rewards = [round(x) for x in normalized_rewards]
+            #     normalized_rewards.sort()
+            #     with open('/home/data/wyy/projects/SeVa/scores/exp62.json', 'a', encoding='utf-8') as f:
+            #         json.dump(normalized_rewards, f)
+            #         f.write('\n')  # 添加换行符
+            
+            per_token_logps = per_token_logps * temp_masks
+
+        
         if average_log_prob:
             return (per_token_logps * loss_mask).sum(-1) / loss_mask.sum(-1)
         else:

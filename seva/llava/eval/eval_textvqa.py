@@ -2,6 +2,8 @@ import os
 import argparse
 import json
 import re
+import sys
+sys.path.append('/home/data/wyy/projects/SeVa/seva')
 
 from llava.eval.m4c_evaluator import TextVQAAccuracyEvaluator
 

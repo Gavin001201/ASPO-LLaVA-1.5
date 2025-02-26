@@ -1,10 +1,12 @@
 import os
+import re
 import json
 import tqdm
 import torch
 import argparse
 import datetime
 import requests
+import numpy as np
 from PIL import Image
 from io import BytesIO
 from transformers import TextStreamer
@@ -22,7 +24,7 @@ from llava.mm_utils import process_images, tokenizer_image_token, get_model_name
 
 import torchvision.transforms as transforms
 import random
-from PIL import ImageFilter
+from PIL import ImageFilter, ImageDraw
 
 def convert_dict_to_tensor(results, device):
     part_tensor = json.dumps(results)
@@ -90,9 +92,8 @@ def main(args):
     conv_mode = "llava_v1"
 
     ## get question file
-    image_file_list = open(args.image_file_list)
-
-    lines = json.load(image_file_list)
+    with open(args.image_file_list, mode='r', encoding='utf-8') as fp:
+        lines= json.load(fp)
     rank, word_size = int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"])
     step = len(lines) // word_size + 1
     start, end = rank * step, (rank + 1) * step
@@ -101,14 +102,24 @@ def main(args):
         print("generating answers...")
 
     results = []
-    for data in tqdm.tqdm(lines[start:end]):
-        # data = json.loads(line)
-        message_input = data["prompt"]
+    for line in tqdm.tqdm(lines[start:end]):
+        message_input = line["question"]
 
-        image = data["id"] + '.jpg'
+        image = line["image"].split('/')[-1]
         
-        image_path = os.path.join(args.image_path, image)
+        image_path_map = {'GQA':'GQA', 'VQA':'VQA/train2014', 'LVIS':'LVIS/train2017'}
+        sub_path = line["image"].split('/')[0]
         
+        if sub_path == 'GQA':
+            sub_image_path = image_path_map['GQA']
+        elif sub_path == 'COCO2015':
+            sub_image_path = image_path_map['VQA']
+        elif sub_path == 'LVIS':
+            sub_image_path = image_path_map['LVIS']
+        else:
+            sub_image_path = line["image"].split('/')[0]
+                
+        image_path = os.path.join(args.image_path, sub_image_path, image)
 
         image = Image.open(image_path).convert("RGB")
         
@@ -120,9 +131,47 @@ def main(args):
 
         # Similar operation in model_worker.py
         image_tensor = process_images([image], image_processor, model.config)
+        #############################
+        # def visualize(matches, image_tensor, image_path, image_processor, model_config):
+        #     image_processor.do_normalize = False
+        #     image = Image.open(image_path).convert('RGB')
+        #     image_tensor = process_images([image], image_processor, model_config)[0]
 
-        if len(args.augmentations) > 0 and "diffusion" in args.augmentations:
-            image_tensor = add_diffusion_noise(image_tensor, args.noise_step)
+        #     # 移除批处理维度，并将通道顺序从 [C, H, W] 转换到 [H, W, C]
+        #     tensor = image_tensor.squeeze(0).permute(1, 2, 0)
+
+        #     # 将数据范围从 [0, 1] 转换到 [0, 255]，并转换为 uint8
+        #     image = (tensor.numpy() * 255).astype(np.uint8)
+
+        #     # 生成 PIL 图像
+        #     image = Image.fromarray(image)
+
+        #     width, height = image.size
+        #     # 可视化定位区域, 绘制bounding box
+        #     coordinates = []
+        #     for item in matches:
+        #         # 将每个字符串按逗号分割并转为浮点数
+        #         coords = list(map(float, item.split(',')))
+        #         coordinates.append(coords)
+        #     for bbox in coordinates:
+        #         draw = ImageDraw.Draw(image)
+        #         x1 = width * bbox[0]
+        #         y1 = height * bbox[1]
+        #         x2 = width * bbox[2]
+        #         y2 = height * bbox[3]
+        #         draw.rectangle([x1, y1, x2, y2], outline="red", width=1)
+
+        #     # 保存图像到本地
+        #     target_path = "/home/data/wyy/projects/SeVa/data/custom_cot_dpo_train/VoCoT/visualize/" + '/'.join(image_path.split("/")[-2:])
+        #     image.save(target_path)
+    
+        # pattern = r'\[\s*([0-9]*\.[0-9]+(?:,\s*[0-9]*\.[0-9]+)*)\s*\]'
+        # matches = re.findall(pattern, line['chosen']) 
+        # visualize(matches, image_tensor, image_path, image_processor, model.config)
+        #############################
+
+        # if len(args.augmentations) > 0 and "diffusion" in args.augmentations:
+        #     image_tensor = add_diffusion_noise(image_tensor, args.noise_step)
 
         if type(image_tensor) is list:
             image_tensor = [image.to(model.device, dtype=torch.float16) for image in image_tensor]
@@ -160,11 +209,11 @@ def main(args):
                 use_cache=True,
                 stopping_criteria=[stopping_criteria])
 
-        outputs = tokenizer.decode(output_ids[0, input_ids.shape[1]:]).strip()
+        outputs = tokenizer.decode(output_ids[0, input_ids.shape[1]:]).strip().replace('</s>', '').replace('\n', '')
         results.append({
             "question": message_input,
             "answer": outputs,
-            "image_id": data['id'].split('.')[0]
+            "image": line['image']
         })
         
     device = f"cuda:{torch.cuda.current_device()}"
